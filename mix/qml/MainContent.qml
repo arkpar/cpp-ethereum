@@ -8,11 +8,6 @@ Rectangle {
 	objectName: "mainContent"
 	signal keyPressed(variant event)
 	focus: true
-	Keys.enabled: true
-	Keys.onPressed:
-	{
-		root.keyPressed(event.key);
-	}
 	anchors.fill: parent
 	height: parent.height
 	width: parent.width;
@@ -30,12 +25,17 @@ Rectangle {
         SplitView {
             //anchors.fill: parent
 			width: parent.width * 0.6
-            orientation: Qt.Vertical
+			orientation: Qt.Vertical
+			/*
 			CodeEditorView {
-				height: parent.height * 0.7
+				height: parent.height * 0.3
 				anchors.top: parent.top
 				width: parent.width
 			}
+			WebPreview {
+				height: parent.height * 0.4
+				width: parent.width
+			} */
 
             Rectangle {
                 anchors.bottom: parent.bottom
