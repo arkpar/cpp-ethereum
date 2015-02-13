@@ -32,5 +32,9 @@ target_link_libraries(${EXECUTABLE} devcore)
 target_link_libraries(${EXECUTABLE} p2p)
 target_link_libraries(${EXECUTABLE} secp256k1)
 
+if (PCH)
+	cotire(${EXECUTABLE})
+endif()
+
 install( TARGETS ${EXECUTABLE} ARCHIVE DESTINATION lib LIBRARY DESTINATION lib )
 install( FILES ${HEADERS} DESTINATION include/${EXECUTABLE} )

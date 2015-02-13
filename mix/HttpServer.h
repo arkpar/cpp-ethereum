@@ -67,7 +67,6 @@ class HttpServer: public QTcpServer, public QQmlParserStatus
 {
 	Q_OBJECT
 	Q_DISABLE_COPY(HttpServer)
-	Q_INTERFACES(QQmlParserStatus)
 
 	/// Server url
 	Q_PROPERTY(QUrl url READ url NOTIFY urlChanged)

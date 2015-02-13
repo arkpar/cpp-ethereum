@@ -7,7 +7,8 @@ cmake_policy(SET CMP0020 NEW)
 project(ethereum)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
+include(cotire)
+set_property(DIRECTORY PROPERTY COTIRE_UNITY_LINK_LIBRARIES_INIT "COPY_UNITY")
 
 ######################################################################################################
 
@@ -19,6 +20,7 @@ function(createDefaultCacheConfig)
 	set(PARANOIA OFF CACHE BOOL "Additional run-time checks")
 	set(JSONRPC ON CACHE BOOL "Build with jsonprc. default on")
 	set(EVMJIT OFF CACHE BOOL "Build a just-in-time compiler for EVM code (requires LLVM)")
+	set(PCH OFF CACHE BOOL "User precompiled headers")
 endfunction()
 
 

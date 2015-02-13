@@ -68,6 +68,11 @@ eth_install_executable(${EXECUTABLE}
 	QMLDIR ${CMAKE_CURRENT_SOURCE_DIR}/qml
 )
 
+if (PCH)
+	cotire(${EXECUTABLE})
+endif()
+
+
 #add qml asnd stdc files to project tree in Qt creator
 file(GLOB_RECURSE QMLFILES "qml/*.*")
 file(GLOB_RECURSE SOLFILES "stdc/*.*")

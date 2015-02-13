@@ -31,5 +31,9 @@ target_link_libraries(${EXECUTABLE} Qt5::Core)
 target_link_libraries(${EXECUTABLE} Qt5::Qml)
 target_link_libraries(${EXECUTABLE} devcore)
 
+if (PCH)
+	cotire(${EXECUTABLE})
+endif()
+
 install( TARGETS ${EXECUTABLE} ARCHIVE DESTINATION lib LIBRARY DESTINATION lib )
 install( FILES ${HEADERS} DESTINATION include/${EXECUTABLE} )

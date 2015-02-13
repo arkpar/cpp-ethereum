@@ -34,6 +34,10 @@ if (EVMJIT)
 	target_link_libraries(${EXECUTABLE} evmjit-cpp)
 endif()
 
+if (PCH)
+	cotire(${EXECUTABLE})
+endif()
+
 install( TARGETS ${EXECUTABLE} ARCHIVE DESTINATION lib LIBRARY DESTINATION lib )
 install( FILES ${HEADERS} DESTINATION include/${EXECUTABLE} )
 

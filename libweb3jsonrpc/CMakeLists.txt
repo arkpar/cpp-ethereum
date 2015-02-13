@@ -49,6 +49,10 @@ if (ETH_JSON_RPC_STUB)
 	add_dependencies(${EXECUTABLE} jsonrpcstub)
 endif()
 
+if (PCH)
+	cotire(${EXECUTABLE})
+endif()
+
 install( TARGETS ${EXECUTABLE} ARCHIVE DESTINATION lib LIBRARY DESTINATION lib )
 install( FILES ${HEADERS} DESTINATION include/${EXECUTABLE} )
 
