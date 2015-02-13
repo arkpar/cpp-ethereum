@@ -12,9 +12,9 @@ template <class _T>
 class vector_ref
 {
 public:
-	typedef _T value_type;
-	typedef _T element_type;
-	typedef typename std::conditional<std::is_const<_T>::value, typename std::remove_const<_T>::type, _T>::type mutable_value_type;
+	using value_type = _T;
+	using element_type = _T;
+	using mutable_value_type = typename std::conditional<std::is_const<_T>::value, typename std::remove_const<_T>::type, _T>::type;
 
 	vector_ref(): m_data(nullptr), m_count(0) {}
 	vector_ref(_T* _data, size_t _count): m_data(_data), m_count(_count) {}
@@ -28,7 +28,7 @@ public:
 
 	bool contentsEqual(std::vector<mutable_value_type> const& _c) const { return _c.size() == m_count && !memcmp(_c.data(), m_data, m_count); }
 	std::vector<mutable_value_type> toVector() const { return std::vector<mutable_value_type>(m_data, m_data + m_count); }
-	std::vector<unsigned char> toBytes() const { return std::vector<unsigned char>((unsigned char const*)m_data, m_data + m_count * sizeof(_T)); }
+	std::vector<unsigned char> toBytes() const { return std::vector<unsigned char>((unsigned char const*)m_data, (unsigned char const*)m_data + m_count * sizeof(_T)); }
 	std::string toString() const { return std::string((char const*)m_data, ((char const*)m_data) + m_count * sizeof(_T)); }
 	template <class _T2> operator vector_ref<_T2>() const { assert(m_count * sizeof(_T) / sizeof(_T2) * sizeof(_T2) / sizeof(_T) == m_count); return vector_ref<_T2>((_T2*)m_data, m_count * sizeof(_T) / sizeof(_T2)); }
 
@@ -41,6 +41,7 @@ public:
 	void retarget(_T const* _d, size_t _s) { m_data = _d; m_count = _s; }
 	void retarget(std::vector<_T> const& _t) { m_data = _t.data(); m_count = _t.size(); }
 	void copyTo(vector_ref<typename std::remove_const<_T>::type> _t) const { memcpy(_t.data(), m_data, std::min(_t.size(), m_count) * sizeof(_T)); }
+	void populate(vector_ref<typename std::remove_const<_T>::type> _t) const { copyTo(_t); memset(_t.data() + m_count, 0, std::max(_t.size(), m_count) - m_count); }
 
 	_T* begin() { return m_data; }
 	_T* end() { return m_data + m_count; }

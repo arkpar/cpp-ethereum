@@ -35,51 +35,53 @@ class QQmlApplicationEngine;
 
 namespace dev
 {
-
-class WebThreeDirect;
-
-namespace eth
-{
-	class Client;
-}
-
 namespace mix
 {
 
 class CodeModel;
-class KeyEventManager;
+class ClientModel;
+class FileIo;
 /**
  * @brief Provides access to application scope variable.
  */
 
-class AppContext : public QObject
+class AppContext: public QObject
 {
 	Q_OBJECT
+	Q_PROPERTY(QString clipboard READ clipboard WRITE toClipboard NOTIFY clipboardChanged)
 
 public:
 	AppContext(QQmlApplicationEngine* _engine);
-	~AppContext();
+	virtual ~AppContext();
+	/// Load the UI from qml files
+	void load();
+	/// Get the current QQMLApplicationEngine instance.
 	QQmlApplicationEngine* appEngine();
-	/// Initialize KeyEventManager (used to handle key pressed event).
-	void initKeyEventManager(QObject* _obj);
-	/// Get the current KeyEventManager instance.
-	KeyEventManager* getKeyEventManager();
 	/// Get code model
 	CodeModel* codeModel() { return m_codeModel.get(); }
+	/// Get client model
+	ClientModel* clientModel() { return m_clientModel.get(); }
 	/// Display an alert message.
 	void displayMessageDialog(QString _title, QString _message);
+	/// Copy text to clipboard
+	Q_INVOKABLE void toClipboard(QString _text);
+	/// Get text from clipboard
+	QString clipboard() const;
+
+signals:
+	/// Triggered once components have been loaded
+	void appLoaded();
+	void clipboardChanged();
 
 private:
 	QQmlApplicationEngine* m_applicationEngine; //owned by app
-	std::unique_ptr<dev::WebThreeDirect> m_webThree;
-	std::unique_ptr<KeyEventManager> m_keyEventManager;
 	std::unique_ptr<CodeModel> m_codeModel;
+	std::unique_ptr<ClientModel> m_clientModel;
+	std::unique_ptr<FileIo> m_fileIo;
 
 public slots:
 	/// Delete the current instance when application quit.
 	void quitApplication() {}
-	/// Initialize components after the loading of the main QML view.
-	void resourceLoaded(QObject* _obj, QUrl _url);
 };
 
 }

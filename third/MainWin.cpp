@@ -34,7 +34,7 @@
 #include <liblll/Compiler.h>
 #include <liblll/CodeFragment.h>
 #include <libevm/VM.h>
-#include <libethereum/BlockChain.h>
+#include <libethereum/CanonBlockChain.h>
 #include <libethereum/ExtVM.h>
 #include <libethereum/Client.h>
 #include <libethereum/EthereumHost.h>
@@ -97,8 +97,8 @@ Main::Main(QWidget *parent) :
 	setWindowFlags(Qt::Window);
 	ui->setupUi(this);
 
-    cerr << "State root: " << BlockChain::genesis().stateRoot << endl;
-	auto gb = BlockChain::createGenesisBlock();
+    cerr << "State root: " << CanonBlockChain::genesis().stateRoot << endl;
+	auto gb = CanonBlockChain::createGenesisBlock();
 	cerr << "Block Hash: " << sha3(gb) << endl;
 	cerr << "Block RLP: " << RLP(gb) << endl;
 	cerr << "Block Hex: " << toHex(gb) << endl;
@@ -114,7 +114,8 @@ Main::Main(QWidget *parent) :
 	
 	connect(ui->ourAccounts->model(), SIGNAL(rowsMoved(const QModelIndex &, int, int, const QModelIndex &, int)), SLOT(ourAccountsRowsMoved()));
 
-	m_web3.reset(new WebThreeDirect("Third", getDataDir() + "/Third", false, {"eth", "shh"}));
+	bytesConstRef networkConfig((byte*)m_networkConfig.data(), m_networkConfig.size());
+	m_web3.reset(new WebThreeDirect("Third", getDataDir() + "/Third", false, {"eth", "shh"}, NetworkPreferences(), networkConfig));
 	m_web3->connect(Host::pocHost());
 
 	m_server = unique_ptr<WebThreeStubServer>(new WebThreeStubServer(m_qwebConnector, *web3(), keysAsVector(m_myKeys)));
@@ -135,7 +136,6 @@ Main::Main(QWidget *parent) :
 	
 	connect(ui->webView, &QWebView::loadFinished, [=]()
 	{
-		m_qweb->poll();
 	});
 	
 	connect(ui->webView, &QWebView::titleChanged, [=]()
@@ -182,14 +182,14 @@ void Main::onKeysChanged()
 	installBalancesWatch();
 }
 
-unsigned Main::installWatch(dev::eth::LogFilter const& _tf, std::function<void()> const& _f)
+unsigned Main::installWatch(dev::eth::LogFilter const& _tf, WatchHandler const& _f)
 {
 	auto ret = ethereum()->installWatch(_tf);
 	m_handlers[ret] = _f;
 	return ret;
 }
 
-unsigned Main::installWatch(dev::h256 _tf, std::function<void()> const& _f)
+unsigned Main::installWatch(dev::h256 _tf, WatchHandler const& _f)
 {
 	auto ret = ethereum()->installWatch(_tf);
 	m_handlers[ret] = _f;
@@ -198,21 +198,21 @@ unsigned Main::installWatch(dev::h256 _tf, std::function<void()> const& _f)
 
 void Main::installWatches()
 {
-	installWatch(dev::eth::LogFilter().topic((u256)(u160)c_config).topic((u256)0), [=](){ installNameRegWatch(); });
-	installWatch(dev::eth::LogFilter().topic((u256)(u160)c_config).topic((u256)1), [=](){ installCurrenciesWatch(); });
-	installWatch(dev::eth::ChainChangedFilter, [=](){ onNewBlock(); });
+	installWatch(dev::eth::LogFilter().address(c_config).topic(0, (u256)0), [=](LocalisedLogEntries const&){ installNameRegWatch(); });
+	installWatch(dev::eth::LogFilter().address(c_config).topic(0, (u256)1), [=](LocalisedLogEntries const&){ installCurrenciesWatch(); });
+	installWatch(dev::eth::ChainChangedFilter, [=](LocalisedLogEntries const&){ onNewBlock(); });
 }
 
 void Main::installNameRegWatch()
 {
 	ethereum()->uninstallWatch(m_nameRegFilter);
-	m_nameRegFilter = installWatch(dev::eth::LogFilter().topic(ethereum()->stateAt(c_config, 0)), [=](){ onNameRegChange(); });
+	m_nameRegFilter = installWatch(dev::eth::LogFilter().address(u160(ethereum()->stateAt(c_config, 0))), [=](LocalisedLogEntries const&){ onNameRegChange(); });
 }
 
 void Main::installCurrenciesWatch()
 {
 	ethereum()->uninstallWatch(m_currenciesFilter);
-	m_currenciesFilter = installWatch(dev::eth::LogFilter().topic(ethereum()->stateAt(c_config, 1)), [=](){ onCurrenciesChange(); });
+	m_currenciesFilter = installWatch(dev::eth::LogFilter().address(u160(ethereum()->stateAt(c_config, 1))), [=](LocalisedLogEntries const&){ onCurrenciesChange(); });
 }
 
 void Main::installBalancesWatch()
@@ -225,10 +225,10 @@ void Main::installBalancesWatch()
 		altCoins.push_back(right160(ethereum()->stateAt(coinsAddr, i + 1)));
 	for (auto i: m_myKeys)
 		for (auto c: altCoins)
-			tf.address(c).topic((u256)(u160)i.address());
+			tf.address(c).topic(0, (u256)(u160)i.address());
 
 	ethereum()->uninstallWatch(m_balancesFilter);
-	m_balancesFilter = installWatch(tf, [=](){ onBalancesChange(); });
+	m_balancesFilter = installWatch(tf, [=](LocalisedLogEntries const&){ onBalancesChange(); });
 }
 
 void Main::onNameRegChange()
@@ -378,10 +378,10 @@ void Main::writeSettings()
 	s.setValue("address", b);
 	s.setValue("url", ui->urlEdit->text());
 
-	bytes d = m_web3->saveNodes();
+	bytes d = m_web3->saveNetwork();
 	if (d.size())
-		m_nodes = QByteArray((char*)d.data(), (int)d.size());
-	s.setValue("peers", m_nodes);
+		m_networkConfig = QByteArray((char*)d.data(), (int)d.size());
+	s.setValue("peers", m_networkConfig);
 
 	s.setValue("geometry", saveGeometry());
 	s.setValue("windowState", saveState());
@@ -410,7 +410,7 @@ void Main::readSettings(bool _skipGeometry)
 		}
 	}
 	ethereum()->setAddress(m_myKeys.back().address());
-	m_nodes = s.value("peers").toByteArray();
+	m_networkConfig = s.value("peers").toByteArray();
 	ui->urlEdit->setText(s.value("url", "about:blank").toString());	//http://gavwood.com/gavcoin.html
 	on_urlEdit_returnPressed();
 }
@@ -531,13 +531,13 @@ void Main::timerEvent(QTimerEvent*)
 	}
 	else
 		interval += 100;
-	
-	if (m_qweb)
-		m_qweb->poll();
 
 	for (auto const& i: m_handlers)
-		if (ethereum()->checkWatch(i.first))
-			i.second();
+	{
+		auto ls = ethereum()->checkWatch(i.first);
+		if (ls.size())
+			i.second(ls);
+	}
 }
 
 void Main::ourAccountsRowsMoved()
@@ -582,11 +582,9 @@ void Main::ensureNetwork()
 		web3()->startNetwork();
 		web3()->connect(defPeer);
 	}
-	else
-		if (!m_web3->peerCount())
-			m_web3->connect(defPeer);
-	if (m_nodes.size())
-		m_web3->restoreNodes(bytesConstRef((byte*)m_nodes.data(), m_nodes.size()));
+//	else
+//		if (!m_web3->peerCount())
+//			m_web3->connect(defPeer);
 }
 
 void Main::on_connect_triggered()

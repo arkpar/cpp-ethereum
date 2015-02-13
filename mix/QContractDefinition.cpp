@@ -20,6 +20,7 @@
  */
 
 #include <QObject>
+#include <libsolidity/CompilerStack.h>
 #include <libsolidity/AST.h>
 #include <libsolidity/Scanner.h>
 #include <libsolidity/Parser.h>
@@ -32,11 +33,20 @@ using namespace dev::mix;
 
 QContractDefinition::QContractDefinition(dev::solidity::ContractDefinition const* _contract): QBasicNodeDefinition(_contract)
 {
-	std::vector<FunctionDefinition const*> functions = _contract->getInterfaceFunctions();
-	for (unsigned i = 0; i < functions.size(); i++)
-	{
-		FunctionDefinition const* func = functions.at(i);
-		m_functions.append(new QFunctionDefinition(func, i));
-	}
-}
+	if (_contract->getConstructor() != nullptr)
+		m_constructor = new QFunctionDefinition(ContractType(*_contract).getConstructorType());
+	else
+		m_constructor = new QFunctionDefinition();
 
+	for (auto const& it: _contract->getInterfaceFunctions())
+		m_functions.append(new QFunctionDefinition(it.second));}
+
+
+QFunctionDefinition* QContractDefinition::getFunction(dev::FixedHash<4> _hash)
+{
+	for (auto const& f: m_functions)
+		if (f->hash() == _hash)
+			return f;
+
+	return nullptr;
+}

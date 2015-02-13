@@ -25,13 +25,12 @@
 #include <QQmlEngine>
 #include <QQmlComponent>
 #include <QQuickTextDocument>
-#include <libevm/VM.h>
-#include "ConstantCompilationControl.h"
-#include "AssemblyDebuggerControl.h"
-#include "TransactionListView.h"
+#include "StatusPane.h"
 #include "AppContext.h"
 #include "MixApplication.h"
 #include "CodeModel.h"
+#include "ClientModel.h"
+#include "CodeHighlighter.h"
 #include "CodeEditorExtensionManager.h"
 
 using namespace dev::mix;
@@ -50,28 +49,14 @@ void CodeEditorExtensionManager::loadEditor(QQuickItem* _editor)
 {
 	if (!_editor)
 		return;
-
-	QVariant doc = _editor->property("textDocument");
-	if (doc.canConvert<QQuickTextDocument*>())
-	{
-		QQuickTextDocument* qqdoc = doc.value<QQuickTextDocument*>();
-		if (qqdoc)
-		{
-			m_doc = qqdoc->textDocument();
-		}
-	}
 }
 
 void CodeEditorExtensionManager::initExtensions()
 {
-	initExtension(std::make_shared<ConstantCompilationControl>(m_appContext));
-	std::shared_ptr<AssemblyDebuggerControl> debug = std::make_shared<AssemblyDebuggerControl>(m_appContext);
-	std::shared_ptr<TransactionListView> tr = std::make_shared<TransactionListView>(m_appContext);
-	QObject::connect(tr->model(), &TransactionListModel::transactionStarted, debug.get(), &AssemblyDebuggerControl::runTransaction);
-	QObject::connect(m_doc, &QTextDocument::contentsChanged, [=]() { m_appContext->codeModel()->registerCodeChange(m_doc->toPlainText()); });
+	std::shared_ptr<StatusPane> output = std::make_shared<StatusPane>(m_appContext);
+	QObject::connect(m_appContext->codeModel(), &CodeModel::compilationComplete, this, &CodeEditorExtensionManager::applyCodeHighlight);
 
-	initExtension(debug);
-	initExtension(tr);
+	initExtension(output);
 }
 
 void CodeEditorExtensionManager::initExtension(std::shared_ptr<Extension> _ext)
@@ -80,10 +65,10 @@ void CodeEditorExtensionManager::initExtension(std::shared_ptr<Extension> _ext)
 	{
 		try
 		{
-			if (_ext->getDisplayBehavior() == ExtensionDisplayBehavior::Tab)
-				_ext->addTabOn(m_tabView);
-			else if (_ext->getDisplayBehavior() == ExtensionDisplayBehavior::RightTab)
-				_ext->addTabOn(m_rightTabView);
+			if (_ext->getDisplayBehavior() == ExtensionDisplayBehavior::RightView)
+				_ext->addTabOn(m_rightView);
+			if (_ext->getDisplayBehavior() == ExtensionDisplayBehavior::HeaderView)
+				_ext->addTabOn(m_headerView);
 		}
 		catch (...)
 		{
@@ -95,27 +80,18 @@ void CodeEditorExtensionManager::initExtension(std::shared_ptr<Extension> _ext)
 	m_features.append(_ext);
 }
 
-void CodeEditorExtensionManager::setEditor(QQuickItem* _editor)
+void CodeEditorExtensionManager::applyCodeHighlight()
 {
-	this->loadEditor(_editor);
-	this->initExtensions();
-
-	auto args = QApplication::arguments();
-	if (args.length() > 1)
-	{
-		QString path = args[1];
-		QFile file(path);
-		if (file.exists() && file.open(QFile::ReadOnly))
-			m_doc->setPlainText(file.readAll());
-	}
+	//TODO: reimplement
 }
 
-void CodeEditorExtensionManager::setRightTabView(QQuickItem* _tabView)
+void CodeEditorExtensionManager::setRightView(QQuickItem* _rightView)
 {
-	m_rightTabView = _tabView;
+	m_rightView = _rightView;
 }
 
-void CodeEditorExtensionManager::setTabView(QQuickItem* _tabView)
+void CodeEditorExtensionManager::setHeaderView(QQuickItem* _headerView)
 {
-	m_tabView = _tabView;
+	m_headerView = _headerView;
+	initExtensions(); //TODO: move this to a proper place
 }
