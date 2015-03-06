@@ -18,11 +18,7 @@ set(EXECUTABLE evmcore)
 
 file(GLOB HEADERS "*.h")
 
-if (ETH_STATIC)
-	add_library(${EXECUTABLE} STATIC ${SRC_LIST} ${HEADERS})
-else()
-	add_library(${EXECUTABLE} SHARED ${SRC_LIST} ${HEADERS})
-endif()
+eth_add_library(${EXECUTABLE})
 
 target_link_libraries(${EXECUTABLE} devcore)
 

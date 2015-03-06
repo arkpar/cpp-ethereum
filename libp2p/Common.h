@@ -28,6 +28,9 @@
 #include <set>
 #include <vector>
 
+#ifdef __clang__
+#define BOOST_ASIO_HAS_CLANG_LIBCXX 1  //make boost::asio think we have std:array, even though we build with libstdc++ on linux
+#endif
 // Make sure boost/asio.hpp is included before windows.h.
 #include <boost/asio.hpp>
 #include <boost/asio/ip/tcp.hpp>

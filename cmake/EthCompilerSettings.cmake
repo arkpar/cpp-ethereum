@@ -18,7 +18,7 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
 
 elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
 
-	set(CMAKE_CXX_FLAGS "-std=c++11 -Wall -Wno-unknown-pragmas -Wextra -DSHAREDLIB -fPIC")
+	set(CMAKE_CXX_FLAGS "-std=c++11  -stdlib=libstdc++ -Wall -Wno-unknown-pragmas -Wextra -DSHAREDLIB -DBOOST_ASIO_HAS_CLANG_LIBCXX -fPIC")
 	set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g -DETH_DEBUG")
 	set(CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG -DETH_RELEASE")
 	set(CMAKE_CXX_FLAGS_RELEASE        "-O3 -DNDEBUG -DETH_RELEASE")
@@ -45,5 +45,16 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 
 else ()
 	message(WARNING "Your compiler is not tested, if you run into any issues, we'd welcome any patches.")
+endif ()
+
+if (("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang"))
+	option(USE_LD_GOLD "Use GNU gold linker" ON)
+	if (USE_LD_GOLD)
+		execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=gold -Wl,--version ERROR_QUIET OUTPUT_VARIABLE LD_VERSION)
+		if ("${LD_VERSION}" MATCHES "GNU gold")
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fuse-ld=gold")
+			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fuse-ld=gold")
+		endif ()
+	endif ()
 endif ()
 

@@ -117,6 +117,8 @@ endfunction()
 set(CMAKE_AUTOMOC ON)
 cmake_policy(SET CMP0015 NEW)
 
+include(cotire)
+set_directory_properties(PROPERTIES COTIRE_ADD_UNITY_BUILD FALSE)
 
 createDefaultCacheConfig()
 configureProject()

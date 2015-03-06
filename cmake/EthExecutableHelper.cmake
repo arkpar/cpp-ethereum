@@ -40,8 +40,21 @@ macro(eth_add_executable EXECUTABLE)
 	else ()
 		add_executable(${EXECUTABLE} ${ETH_ADD_EXECUTABLE_UI_RESOURCES}  ${ETH_ADD_EXECUTABLE_WIN_RESOURCES} ${SRC_LIST} ${HEADERS})
 	endif()
+	set_target_properties(${EXECUTABLE} PROPERTIES COTIRE_ADD_UNITY_BUILD FALSE)
+	cotire(${EXECUTABLE})
 
 endmacro()
+
+macro(eth_add_library TARGET)
+	if (ETH_STATIC)
+		add_library(${TARGET} STATIC ${SRC_LIST} ${HEADERS})
+	else()
+		add_library(${TARGET} SHARED ${SRC_LIST} ${HEADERS})
+	endif()
+	set_target_properties(${TARGET} PROPERTIES COTIRE_ADD_UNITY_BUILD FALSE)
+	cotire(${TARGET})
+endmacro()
+
 
 # 
 # this function requires the following variables to be specified:
