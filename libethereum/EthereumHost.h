@@ -82,6 +82,8 @@ public:
 
 private:
 	std::pair<std::vector<std::shared_ptr<EthereumPeer>>, std::vector<std::shared_ptr<EthereumPeer>>> randomSelection(unsigned _percent = 25, std::function<bool(EthereumPeer*)> const& _allow = [](EthereumPeer const*){ return true; });
+	void forEachPeer(std::function<void(std::shared_ptr<EthereumPeer>)> const& _f);
+	void forEachPeer(std::function<void(EthereumPeer*)> const& _f);
 
 	/// Session is tell us that we may need (re-)syncing with the peer.
 	void noteNeedsSyncing(EthereumPeer* _who);

@@ -52,8 +52,7 @@ EthereumHost::EthereumHost(BlockChain const& _ch, TransactionQueue& _tq, BlockQu
 
 EthereumHost::~EthereumHost()
 {
-	for (auto i: peerSessions())
-		i.first->cap<EthereumPeer>().get()->abortSync();
+	forEachPeer([](EthereumPeer* _p) { _p->abortSync(); });
 }
 
 bool EthereumHost::ensureInitialised()
@@ -73,17 +72,13 @@ bool EthereumHost::ensureInitialised()
 
 void EthereumHost::noteNeedsSyncing(EthereumPeer* _who)
 {
-	continueSync(_who);
+	if (_who->m_asking == Asking::Nothing)
+		continueSync(_who);
 }
 
 void EthereumHost::reset()
 {
-	for (auto const& j: peerSessions())
-	{
-		auto pp = j.first->cap<EthereumPeer>();
-		if (pp.get())
-			pp->abortSync();
-	}
+	forEachPeer([](EthereumPeer* _p) { _p->abortSync(); });
 	m_man.resetToChain(h256s());
 	m_hashMan.reset();
 	m_needSyncBlocks = true;
@@ -113,9 +108,7 @@ void EthereumHost::doWork()
 		}
 	}
 
-	for (auto p: peerSessions())
-		if (shared_ptr<EthereumPeer> const& ep = p.first->cap<EthereumPeer>())
-			ep->tick();
+	forEachPeer([](EthereumPeer* _p) { _p->tick(); });
 
 //	return netChange;
 	// TODO: Figure out what to do with netChange.
@@ -135,43 +128,60 @@ void EthereumHost::maintainTransactions()
 	}
 	for (auto const& t: ts)
 		m_transactionsSent.insert(t.first);
-	for (auto p: peerSessions())
-		if (auto ep = p.first->cap<EthereumPeer>())
+	forEachPeer([&](shared_ptr<EthereumPeer> _p)
+	{
+		bytes b;
+		unsigned n = 0;
+		for (auto const& h: peerTransactions[_p])
 		{
-			bytes b;
-			unsigned n = 0;
-			for (auto const& h: peerTransactions[ep])
-			{
-				ep->m_knownTransactions.insert(h);
-				b += ts[h].rlp();
-				++n;
-			}
-
-			ep->clearKnownTransactions();
-
-			if (n || ep->m_requireTransactions)
-			{
-				RLPStream ts;
-				ep->prep(ts, TransactionsPacket, n).appendRaw(b, n);
-				ep->sealAndSend(ts);
-			}
-			ep->m_requireTransactions = false;
+			_p->m_knownTransactions.insert(h);
+			b += ts[h].rlp();
+			++n;
 		}
+
+		_p->clearKnownTransactions();
+
+		if (n || _p->m_requireTransactions)
+		{
+			RLPStream ts;
+			_p->prep(ts, TransactionsPacket, n).appendRaw(b, n);
+			_p->sealAndSend(ts);
+		}
+		_p->m_requireTransactions = false;
+	});
+}
+
+void EthereumHost::forEachPeer(std::function<void(EthereumPeer*)> const& _f)
+{
+	forEachPeer([&](std::shared_ptr<EthereumPeer> _p)
+	{
+		if (_p)
+			_f(_p.get());
+	});
+}
+
+void EthereumHost::forEachPeer(std::function<void(std::shared_ptr<EthereumPeer>)> const& _f)
+{
+	for (auto s: peerSessions())
+		_f(s.first->cap<EthereumPeer>());
+	for (auto s: peerSessions(protocolVersion() - 1)) //TODO:
+		_f(s.first->cap<EthereumPeer>(protocolVersion() - 1));
+
 }
 
 pair<vector<shared_ptr<EthereumPeer>>, vector<shared_ptr<EthereumPeer>>> EthereumHost::randomSelection(unsigned _percent, std::function<bool(EthereumPeer*)> const& _allow)
 {
 	pair<vector<shared_ptr<EthereumPeer>>, vector<shared_ptr<EthereumPeer>>> ret;
-	ret.second.reserve(peerSessions().size());
-	for (auto const& j: peerSessions())
+	vector<shared_ptr<EthereumPeer>> peers;
+	forEachPeer([&](shared_ptr<EthereumPeer> _p)
 	{
-		auto pp = j.first->cap<EthereumPeer>();
-		if (_allow(pp.get()))
-			ret.second.push_back(pp);
-	}
+		if (_p && _allow(_p.get()))
+			ret.second.push_back(_p);
+	});
 
-	ret.second.reserve((peerSessions().size() * _percent + 99) / 100);
-	for (unsigned i = (peerSessions().size() * _percent + 99) / 100; i-- && ret.second.size();)
+	size_t size = (ret.second.size() * _percent + 99) / 100;
+	ret.second.reserve(size);
+	for (unsigned i = size; i-- && ret.second.size();)
 	{
 		unsigned n = rand() % ret.second.size();
 		ret.first.push_back(std::move(ret.second[n]));
@@ -258,7 +268,8 @@ void EthereumHost::onPeerHashes(EthereumPeer* _peer, h256s const& _hashes)
 		if (status == QueueStatus::Importing || status == QueueStatus::Ready || m_chain.isKnown(h))
 		{
 			clog(NetMessageSummary) << "block hash ready:" << h << ". Start blocks download...";
-			continueSync(_peer);
+			m_v60Hashes += neededBlocks;
+			onPeerDoneHashes(_peer, false);
 			return;
 		}
 		else if (status == QueueStatus::Bad)
@@ -276,8 +287,9 @@ void EthereumHost::onPeerHashes(EthereumPeer* _peer, h256s const& _hashes)
 			knowns++;
 		m_syncingLatestHash = h;
 	}
+	m_v60Hashes += neededBlocks;
 	clog(NetMessageSummary) << knowns << "knowns," << unknowns << "unknowns; now at" << m_syncingLatestHash;
-		// run through - ask for more.
+	continueSync(_peer);
 }
 
 void EthereumHost::onPeerHashes(EthereumPeer* _peer, unsigned /*_index*/, h256s const& _hashes)
@@ -293,7 +305,7 @@ void EthereumHost::onPeerHashes(EthereumPeer* _peer, unsigned /*_index*/, h256s 
 		if (status == QueueStatus::Importing || status == QueueStatus::Ready || m_chain.isKnown(h))
 		{
 			clog(NetMessageSummary) << "block hash ready:" << h << ". Start blocks download...";
-			continueSync(_peer);
+			onPeerDoneHashes(_peer, false);
 			return ;
 		}
 		else if (status == QueueStatus::Bad)
@@ -409,33 +421,49 @@ void EthereumHost::onPeerBlocks(EthereumPeer* _peer, RLP const& _r)
 
 void EthereumHost::continueSync()
 {
-	for (auto j: peerSessions())
+	forEachPeer([&](EthereumPeer* _p)
 	{
 		clog(NetNote) << "Getting help with downloading hashes and blocks";
-		auto e = j.first->cap<EthereumPeer>().get();
-		if (e->m_asking == Asking::Nothing)
-			continueSync(e);
-	}
+		if (_p->m_asking == Asking::Nothing)
+			continueSync(_p);
+	});
 }
 
 void EthereumHost::continueSync(EthereumPeer* _peer)
 {
+	bool otherPeerSync = false;
+	bool thisPeerSync = false;
 	if (m_needSyncHashes && peerShouldGrabChain(_peer))
 	{
-		for (auto j: peerSessions())
+		forEachPeer([&](EthereumPeer* _p)
 		{
-			auto e = j.first->cap<EthereumPeer>().get();
-			if (e != _peer && e->m_asking == Asking::Hashes && e->m_protocolVersion != protocolVersion())
+			if (_p->m_asking == Asking::Hashes && _p->m_protocolVersion != protocolVersion())
 			{
 				// Already have a peer downloading hash chain with old protocol, do nothing
-				_peer->setIdle();
-				return;
+				if (_p == _peer)
+					thisPeerSync = true;
+				else
+					otherPeerSync = true;
+
 			}
+		});
+		if (otherPeerSync)
+		{
+			_peer->setIdle();
+			return;
 		}
 		if (_peer->m_protocolVersion == protocolVersion())
 			_peer->requestHashes();
 		else
+		{
+			if (!thisPeerSync)
+			{
+				// Restart sync in single peer mode
+				m_v60Hashes.clear();
+				m_syncingLatestHash =_peer->m_latestHash;
+			}
 			_peer->requestHashes(m_syncingLatestHash);
+		}
 	}
 	else if (m_needSyncBlocks && peerShouldGrabBlocks(_peer)) // Check if this peer can help with downloading blocks
 		_peer->requestBlocks();

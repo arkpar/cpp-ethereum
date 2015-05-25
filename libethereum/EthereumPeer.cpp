@@ -96,11 +96,7 @@ void EthereumPeer::setIdle()
 	else if (m_asking == Asking::State)
 	{
 		setAsking(Asking::Nothing);
-		// Just got the state - should check to see if we can be of help downloading the chain if any.
-		// Otherwise, should put ourselves up for sync.
-		setNeedsSyncing(m_latestHash, m_totalDifficulty);
 	}
-	// Otherwise it's fine. We don't care if it's Nothing->Nothing.
 }
 
 void EthereumPeer::requestState()
@@ -110,7 +106,7 @@ void EthereumPeer::requestState()
 	setAsking(Asking::State);
 	RLPStream s;
 	prep(s, StatusPacket, 5)
-					<< host()->protocolVersion()
+					<< host()->protocolVersion() - 1
 					<< host()->networkId()
 					<< host()->m_chain.details().totalDifficulty
 					<< host()->m_chain.currentHash()
@@ -120,7 +116,7 @@ void EthereumPeer::requestState()
 
 void EthereumPeer::requestHashes()
 {
-	assert(m_asking == Asking::Nothing);
+	assert(m_asking != Asking::Blocks);
 	m_syncHashNumber = m_hashSub.nextFetch(c_maxBlocksAsk);
 	setAsking(Asking::Hashes);
 	RLPStream s;
@@ -130,7 +126,7 @@ void EthereumPeer::requestHashes()
 
 void EthereumPeer::requestHashes(h256 const& _lastHash)
 {
-	assert(m_asking == Asking::Nothing);
+	assert(m_asking != Asking::Blocks);
 	setAsking(Asking::Hashes);
 	RLPStream s;
 	prep(s, GetBlockHashesPacket, 2) << _lastHash << c_maxHashesAsk;
@@ -139,23 +135,20 @@ void EthereumPeer::requestHashes(h256 const& _lastHash)
 
 void EthereumPeer::requestBlocks()
 {
-	if (m_asking == Asking::Nothing || m_asking == Asking::Hashes || m_asking == Asking::Blocks)
+	// Looks like it's the best yet for total difficulty. Set to download.
+	setAsking(Asking::Blocks);		// will kick off other peers to help if available.
+	auto blocks = m_sub.nextFetch(c_maxBlocksAsk);
+	if (blocks.size())
 	{
-		// Looks like it's the best yet for total difficulty. Set to download.
-		setAsking(Asking::Blocks);		// will kick off other peers to help if available.
-		auto blocks = m_sub.nextFetch(c_maxBlocksAsk);
-		if (blocks.size())
-		{
-			RLPStream s;
-			prep(s, GetBlocksPacket, blocks.size());
-			for (auto const& i: blocks)
-				s << i;
-			sealAndSend(s);
-		}
-		else
-			setIdle();
-		return;
+		RLPStream s;
+		prep(s, GetBlocksPacket, blocks.size());
+		for (auto const& i: blocks)
+			s << i;
+		sealAndSend(s);
 	}
+	else
+		setIdle();
+	return;
 }
 
 void EthereumPeer::setAsking(Asking _a)
@@ -207,6 +200,8 @@ bool EthereumPeer::interpret(unsigned _id, RLP const& _r)
 	case StatusPacket:
 	{
 		m_protocolVersion = _r[0].toInt<unsigned>();
+		if (!!session()->cap<EthereumPeer>(EthereumHost::staticVersion()))
+			m_protocolVersion = host()->protocolVersion();
 		m_networkId = _r[1].toInt<u256>();
 
 		// a bit dirty as we're misusing these to communicate the values to transition, but harmless.
