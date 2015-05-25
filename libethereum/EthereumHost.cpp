@@ -37,6 +37,8 @@ using namespace dev;
 using namespace dev::eth;
 using namespace p2p;
 
+const unsigned c_prevProtocolVersion = 60;
+
 EthereumHost::EthereumHost(BlockChain const& _ch, TransactionQueue& _tq, BlockQueue& _bq, u256 _networkId):
 	HostCapability<EthereumPeer>(),
 	Worker		("ethsync"),
@@ -71,86 +73,25 @@ bool EthereumHost::ensureInitialised()
 
 void EthereumHost::noteNeedsSyncing(EthereumPeer* _who)
 {
-	// if already downloading hash-chain, ignore.
-	if (isSyncing())
-	{
-		clog(NetAllDetail) << "Sync in progress: Just set to help out.";
-		if (m_syncer->m_asking == Asking::Blocks)
-			_who->transition(Asking::Blocks);
-	}
-	else
-		// otherwise check to see if we should be downloading...
-		_who->attemptSync();
-}
-
-void EthereumHost::changeSyncer(EthereumPeer* _syncer, bool _needHelp)
-{
-	if (_syncer)
-		clog(NetAllDetail) << "Changing syncer to" << _syncer->session()->socketId();
-	else
-		clog(NetAllDetail) << "Clearing syncer.";
-
-	m_syncer = _syncer;
-	if (isSyncing())
-	{
-		if (_needHelp && _syncer->m_asking == Asking::Blocks)
-			for (auto j: peerSessions())
-			{
-				clog(NetNote) << "Getting help with downloading blocks";
-				auto e = j.first->cap<EthereumPeer>().get();
-				if (e != _syncer && e->m_asking == Asking::Nothing)
-					e->transition(Asking::Blocks);
-			}
-	}
-	else
-	{
-		// start grabbing next hash chain if there is one.
-		for (auto j: peerSessions())
-		{
-			j.first->cap<EthereumPeer>()->attemptSync();
-			if (isSyncing())
-				return;
-		}
-		clog(NetNote) << "No more peers to sync with.";
-	}
-}
-
-void EthereumHost::noteDoneBlocks(EthereumPeer* _who, bool _clemency)
-{
-	if (m_man.isComplete())
-	{
-		// Done our chain-get.
-		clog(NetNote) << "Chain download complete.";
-		// 1/100th for each useful block hash.
-		_who->addRating(m_man.chainSize() / 100);
-		m_man.reset();
-	}
-	else if (_who->isSyncing())
-	{
-		if (_clemency)
-			clog(NetNote) << "Chain download failed. Aborted while incomplete.";
-		else
-		{
-			// Done our chain-get.
-			clog(NetWarn) << "Chain download failed. Peer with blocks didn't have them all. This peer is bad and should be punished.";
-			clog(NetWarn) << m_man.remaining();
-			clog(NetWarn) << "WOULD BAN.";
-//			m_banned.insert(_who->session()->id());			// We know who you are!
-//			_who->disable("Peer sent hashes but was unable to provide the blocks.");
-		}
-		m_man.reset();
-	}
+	continueSync(_who);
 }
 
 void EthereumHost::reset()
 {
-	if (m_syncer)
-		m_syncer->abortSync();
-
+	for (auto const& j: peerSessions())
+	{
+		auto pp = j.first->cap<EthereumPeer>();
+		if (pp.get())
+			pp->abortSync();
+	}
 	m_man.resetToChain(h256s());
-
+	m_hashMan.reset();
+	m_needSyncBlocks = true;
+	m_needSyncHashes = true;
+	m_syncingLatestHash = h256();
 	m_latestBlockSent = h256();
 	m_transactionsSent.clear();
+	m_v60Hashes.clear();
 }
 
 void EthereumHost::doWork()
@@ -277,5 +218,260 @@ void EthereumHost::maintainBlocks(h256 const& _currentHash)
 			}
 		}
 		m_latestBlockSent = _currentHash;
+	}
+}
+
+void EthereumHost::onPeerState(EthereumPeer* _peer)
+{
+	if (!_peer->enabled())
+	{
+		clog(NetNote) << "Ignoring status from disabled peer";
+		return;
+	}
+	if (_peer->m_genesisHash != m_chain.genesisHash())
+		_peer->disable("Invalid genesis hash");
+	else if (_peer->m_protocolVersion != protocolVersion() && _peer->m_protocolVersion != c_prevProtocolVersion)
+		_peer->disable("Invalid protocol version.");
+	else if (_peer->m_networkId != networkId())
+		_peer->disable("Invalid network identifier.");
+	else if (_peer->session()->info().clientVersion.find("/v0.7.0/") != string::npos)
+		_peer->disable("Blacklisted client version.");
+	else if (isBanned(_peer->session()->id()))
+		_peer->disable("Peer banned for previous bad behaviour.");
+	else
+	{
+		_peer->m_expectedHashes = 500000; //TODO:
+		continueSync(_peer);
+	}
+}
+
+void EthereumHost::onPeerHashes(EthereumPeer* _peer, h256s const& _hashes)
+{
+	unsigned knowns = 0;
+	unsigned unknowns = 0;
+	h256s neededBlocks;
+	for (unsigned i = 0; i < _hashes.size(); ++i)
+	{
+		_peer->addRating(1);
+		auto h = _hashes[i];
+		auto status = m_bq.blockStatus(h);
+		if (status == QueueStatus::Importing || status == QueueStatus::Ready || m_chain.isKnown(h))
+		{
+			clog(NetMessageSummary) << "block hash ready:" << h << ". Start blocks download...";
+			continueSync(_peer);
+			return;
+		}
+		else if (status == QueueStatus::Bad)
+		{
+			cwarn << "block hash bad!" << h << ". Bailing...";
+			_peer->setIdle();
+			return;
+		}
+		else if (status == QueueStatus::Unknown)
+		{
+			unknowns++;
+			neededBlocks.push_back(h);
+		}
+		else
+			knowns++;
+		m_syncingLatestHash = h;
+	}
+	clog(NetMessageSummary) << knowns << "knowns," << unknowns << "unknowns; now at" << m_syncingLatestHash;
+		// run through - ask for more.
+}
+
+void EthereumHost::onPeerHashes(EthereumPeer* _peer, unsigned /*_index*/, h256s const& _hashes)
+{
+	unsigned knowns = 0;
+	unsigned unknowns = 0;
+	h256s neededBlocks;
+	for (unsigned i = 0; i < _hashes.size(); ++i)
+	{
+		_peer->addRating(1);
+		auto h = _hashes[i];
+		auto status = m_bq.blockStatus(h);
+		if (status == QueueStatus::Importing || status == QueueStatus::Ready || m_chain.isKnown(h))
+		{
+			clog(NetMessageSummary) << "block hash ready:" << h << ". Start blocks download...";
+			continueSync(_peer);
+			return ;
+		}
+		else if (status == QueueStatus::Bad)
+		{
+			cwarn << "block hash bad!" << h << ". Bailing...";
+			_peer->setIdle();
+			return;
+		}
+		else if (status == QueueStatus::Unknown)
+		{
+			unknowns++;
+			neededBlocks.push_back(h);
+		}
+		else
+			knowns++;
+		m_syncingLatestHash = h;
+	}
+	m_man.appendToChain(neededBlocks);
+	clog(NetMessageSummary) << knowns << "knowns," << unknowns << "unknowns; now at" << m_syncingLatestHash;
+	continueSync(_peer);
+}
+
+void EthereumHost::onPeerDoneHashes(EthereumPeer* _peer, bool _new)
+{
+	m_needSyncHashes = false;
+	if (_peer->m_protocolVersion == protocolVersion() || _new)
+	{
+		continueSync(_peer);
+	}
+	else
+	{
+		m_man.resetToChain(m_v60Hashes);
+		continueSync();
+	}
+}
+
+void EthereumHost::onPeerBlocks(EthereumPeer* _peer, RLP const& _r)
+{
+	if (!_peer->enabled())
+	{
+		clog(NetNote) << "Ignoring blocks from disabled peer";
+		return;
+	}
+	unsigned itemCount = _r.itemCount();
+	clog(NetMessageSummary) << "Blocks (" << dec << itemCount << "entries)" << (itemCount ? "" : ": NoMoreBlocks");
+
+	if (itemCount == 0)
+	{
+		// Got to this peer's latest block - just give up.
+		_peer->setIdle();
+		return;
+	}
+
+	unsigned success = 0;
+	unsigned future = 0;
+	unsigned unknown = 0;
+	unsigned got = 0;
+	unsigned repeated = 0;
+
+	for (unsigned i = 0; i < itemCount; ++i)
+	{
+		auto h = BlockInfo::headerHash(_r[i].data());
+		if (_peer->m_sub.noteBlock(h))
+		{
+			_peer->addRating(10);
+			switch (m_bq.import(_r[i].data(), m_chain))
+			{
+			case ImportResult::Success:
+				success++;
+				break;
+
+			case ImportResult::Malformed:
+			case ImportResult::BadChain:
+				_peer->disable("Malformed block received.");
+				return;
+
+			case ImportResult::FutureTime:
+				future++;
+				break;
+
+			case ImportResult::AlreadyInChain:
+			case ImportResult::AlreadyKnown:
+				got++;
+				break;
+
+			case ImportResult::UnknownParent:
+				unknown++;
+				break;
+
+			default:;
+			}
+		}
+		else
+		{
+			_peer->addRating(0);	// -1?
+			repeated++;
+		}
+	}
+
+	clog(NetMessageSummary) << dec << success << "imported OK," << unknown << "with unknown parents," << future << "with future timestamps," << got << " already known," << repeated << " repeats received.";
+
+	if (m_man.isComplete() && !m_needSyncHashes)
+	{
+		// Done our chain-get.
+		m_needSyncBlocks = false;
+		clog(NetNote) << "Chain download complete.";
+		// 1/100th for each useful block hash.
+		_peer->addRating(m_man.chainSize() / 100); //TODO: what about other peers?
+		m_man.reset();
+	}
+	continueSync(_peer);
+}
+
+void EthereumHost::continueSync()
+{
+	for (auto j: peerSessions())
+	{
+		clog(NetNote) << "Getting help with downloading hashes and blocks";
+		auto e = j.first->cap<EthereumPeer>().get();
+		if (e->m_asking == Asking::Nothing)
+			continueSync(e);
+	}
+}
+
+void EthereumHost::continueSync(EthereumPeer* _peer)
+{
+	if (m_needSyncHashes && peerShouldGrabChain(_peer))
+	{
+		for (auto j: peerSessions())
+		{
+			auto e = j.first->cap<EthereumPeer>().get();
+			if (e != _peer && e->m_asking == Asking::Hashes && e->m_protocolVersion != protocolVersion())
+			{
+				// Already have a peer downloading hash chain with old protocol, do nothing
+				_peer->setIdle();
+				return;
+			}
+		}
+		if (_peer->m_protocolVersion == protocolVersion())
+			_peer->requestHashes();
+		else
+			_peer->requestHashes(m_syncingLatestHash);
+	}
+	else if (m_needSyncBlocks && peerShouldGrabBlocks(_peer)) // Check if this peer can help with downloading blocks
+		_peer->requestBlocks();
+	else
+		_peer->setIdle();
+}
+
+bool EthereumHost::peerShouldGrabBlocks(EthereumPeer* _peer) const
+{
+	auto td = _peer->m_totalDifficulty;
+	auto lh = m_syncingLatestHash;
+	auto ctd = m_chain.details().totalDifficulty;
+
+	clog(NetNote) << "Should grab blocks? " << td << "vs" << ctd;
+
+	if (td < ctd || (td == ctd && m_chain.currentHash() == lh))
+		return false;
+
+	return true;
+}
+
+bool EthereumHost::peerShouldGrabChain(EthereumPeer* _peer) const
+{
+	h256 c = m_chain.currentHash();
+	unsigned n = m_chain.number();
+	u256 td = m_chain.details().totalDifficulty;
+
+	clog(NetAllDetail) << "Attempt chain-grab? Latest:" << c << ", number:" << n << ", TD:" << td << " versus " << _peer->m_totalDifficulty;
+	if (td >= _peer->m_totalDifficulty)
+	{
+		clog(NetAllDetail) << "No. Our chain is better.";
+		return false;
+	}
+	else
+	{
+		clog(NetAllDetail) << "Yes. Their chain is better.";
+		return true;
 	}
 }
