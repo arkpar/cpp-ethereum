@@ -244,15 +244,16 @@ bool EthereumPeer::interpret(unsigned _id, RLP const& _r)
 	{
 		if (m_protocolVersion == host()->protocolVersion())
 		{
-			u256 number = _r[0].toInt<u256>();
+			u256 number256 = _r[0].toInt<u256>();
+			unsigned number = (unsigned) number256;
 			unsigned limit = _r[1].toInt<unsigned>();
 			clog(NetMessageSummary) << "GetBlockHashes (" << number << "-" << number + limit << ")";
 			RLPStream s;
 			if (number <= host()->m_chain.number())
 			{
-				unsigned c = (unsigned)min<u256>(host()->m_chain.number() - number + 1, limit);
+				unsigned c = number + min<unsigned>(host()->m_chain.number() - number + 1, limit);
 				prep(s, BlockHashesPacket, c);
-				for (unsigned n = (unsigned)number; n < c; n++)
+				for (unsigned n = number; n < c; n++)
 				{
 					h256 p = host()->m_chain.numberHash(n);
 					s << p;
@@ -301,7 +302,7 @@ bool EthereumPeer::interpret(unsigned _id, RLP const& _r)
 		for (unsigned i = 0; i < itemCount; ++i)
 		{
 			hashes[i] = _r[i].toHash<h256>();
-			m_hashSub.noteHash(m_syncHashNumber, m_syncHashNumber + i);
+			m_hashSub.noteHash(m_syncHashNumber + i, 1);
 		}
 
 		if (m_protocolVersion == host()->protocolVersion())

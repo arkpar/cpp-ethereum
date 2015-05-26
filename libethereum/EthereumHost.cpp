@@ -48,6 +48,7 @@ EthereumHost::EthereumHost(BlockChain const& _ch, TransactionQueue& _tq, BlockQu
 	m_networkId	(_networkId)
 {
 	m_latestBlockSent = _ch.currentHash();
+	m_hashMan.reset(m_chain.number() + 1);
 }
 
 EthereumHost::~EthereumHost()
@@ -80,7 +81,7 @@ void EthereumHost::reset()
 {
 	forEachPeer([](EthereumPeer* _p) { _p->abortSync(); });
 	m_man.resetToChain(h256s());
-	m_hashMan.reset();
+	m_hashMan.reset(m_chain.number() + 1);
 	m_needSyncBlocks = true;
 	m_needSyncHashes = true;
 	m_syncingLatestHash = h256();
@@ -252,7 +253,8 @@ void EthereumHost::onPeerState(EthereumPeer* _peer)
 	{
 
 		_peer->m_expectedHashes = 500000; //TODO:
-		m_hashMan.resetToRange(1, _peer->m_expectedHashes);
+		if (m_hashMan.chainSize() < _peer->m_expectedHashes)
+			m_hashMan.resetToRange(m_chain.number() + 1, _peer->m_expectedHashes);
 		continueSync(_peer);
 	}
 }
@@ -325,7 +327,19 @@ void EthereumHost::onPeerHashes(EthereumPeer* _peer, unsigned /*_index*/, h256s 
 	}
 	m_man.appendToChain(neededBlocks);
 	clog(NetMessageSummary) << knowns << "knowns," << unknowns << "unknowns; now at" << m_syncingLatestHash;
-	continueSync(_peer);
+
+	if (m_hashMan.isComplete())
+	{
+		// Done our chain-get.
+		m_needSyncHashes = false;
+		clog(NetNote) << "Hashes download complete.";
+		// 1/100th for each useful block hash.
+		_peer->addRating(m_man.chainSize() / 100); //TODO: what about other peers?
+		m_hashMan.reset(m_chain.number() + 1);
+		continueSync();
+	}
+	else
+		continueSync(_peer);
 }
 
 void EthereumHost::onPeerDoneHashes(EthereumPeer* _peer, bool _new)

@@ -190,16 +190,9 @@ public:
 	RangeMask<unsigned> const& attemped() const { return m_attempted; }
 
 private:
-	void resetFetch()		// Called by DownloadMan when we need to reset the download.
-	{
-		Guard l(m_fetch);
-		m_remaining = 0;
-		m_asked.reset();
-		m_attempted.reset();
-	}
+	void resetFetch();		// Called by DownloadMan when we need to reset the download.
 
 	HashDownloadMan* m_man = nullptr;
-
 	mutable Mutex m_fetch;
 	unsigned m_remaining;
 	RangeMask<unsigned> m_asked;
@@ -227,20 +220,26 @@ public:
 		WriteGuard l(m_lock);
 		m_chainStart = _start;
 		m_chainCount = _count;
-		m_got = RangeMask<unsigned>(_start, _start + _count);
-	}
-
-	void reset()
-	{
+		m_got += RangeMask<unsigned>(_start, _start + _count);
 		{
 			ReadGuard l(x_subs);
 			for (auto i: m_subs)
 				i->resetFetch();
 		}
+	}
+
+	void reset(unsigned _start)
+	{
 		WriteGuard l(m_lock);
-		m_chainStart = 0;
+		m_chainStart = _start;
 		m_chainCount = 0;
-		m_got.reset();
+		m_got = RangeMask<unsigned>(_start, _start);
+
+		{
+			ReadGuard l(x_subs);
+			for (auto i: m_subs)
+				i->resetFetch();
+		}
 	}
 
 	RangeMask<unsigned> taken(bool _desperate = false) const
