@@ -240,7 +240,7 @@ void EthereumHost::onPeerState(EthereumPeer* _peer)
 	}
 	if (_peer->m_genesisHash != m_chain.genesisHash())
 		_peer->disable("Invalid genesis hash");
-	else if (_peer->m_protocolVersion != protocolVersion() && _peer->m_protocolVersion != c_prevProtocolVersion)
+	else if (_peer->m_protocolVersion != protocolVersion())// && _peer->m_protocolVersion != c_prevProtocolVersion)
 		_peer->disable("Invalid protocol version.");
 	else if (_peer->m_networkId != networkId())
 		_peer->disable("Invalid network identifier.");
@@ -250,7 +250,9 @@ void EthereumHost::onPeerState(EthereumPeer* _peer)
 		_peer->disable("Peer banned for previous bad behaviour.");
 	else
 	{
+
 		_peer->m_expectedHashes = 500000; //TODO:
+		m_hashMan.resetToRange(1, _peer->m_expectedHashes);
 		continueSync(_peer);
 	}
 }
@@ -304,9 +306,7 @@ void EthereumHost::onPeerHashes(EthereumPeer* _peer, unsigned /*_index*/, h256s 
 		auto status = m_bq.blockStatus(h);
 		if (status == QueueStatus::Importing || status == QueueStatus::Ready || m_chain.isKnown(h))
 		{
-			clog(NetMessageSummary) << "block hash ready:" << h << ". Start blocks download...";
-			onPeerDoneHashes(_peer, false);
-			return ;
+			clog(NetWarn) << "block hash alrady known:" << h;
 		}
 		else if (status == QueueStatus::Bad)
 		{
