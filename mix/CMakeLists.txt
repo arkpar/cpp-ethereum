@@ -26,7 +26,7 @@ if (APPLE)
 endif()
 
 find_package (Qt5WebEngine)
-if (APPLE)
+if (APPLE AND (NOT "${Qt5Core_VERSION_STRING}" VERSION_LESS "5.5"))
 # TODO: remove indirect dependencies once macdeployqt is fixed
 	find_package (Qt5WebEngineCore)
 	find_package (Qt5DBus)
